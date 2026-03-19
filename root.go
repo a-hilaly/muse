@@ -36,8 +36,9 @@ Getting started:
   muse distill && muse show
 
 Data is stored locally at ~/.muse/ by default. Set MUSE_BUCKET to use S3 instead.
-Set MUSE_PROVIDER=anthropic to use the Anthropic API directly (requires ANTHROPIC_API_KEY).
-Default provider is bedrock.
+
+Provider is auto-detected from API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY) or
+falls back to Bedrock. Override with MUSE_PROVIDER=anthropic|openai|bedrock.
 
 Run "muse listen --help" for MCP server configuration.`,
 		SilenceErrors: true,
@@ -75,18 +76,36 @@ const (
 )
 
 // newLLMClient creates an inference.Client based on MUSE_PROVIDER and tier.
+// When MUSE_PROVIDER is unset, the provider is auto-detected from environment
+// variables: ANTHROPIC_API_KEY → anthropic, OPENAI_API_KEY → openai,
+// otherwise bedrock (uses standard AWS credential chain).
 func newLLMClient(ctx context.Context, tier string) (inference.Client, error) {
-	provider := os.Getenv("MUSE_PROVIDER")
+	provider := detectProvider()
 	switch provider {
 	case "anthropic":
 		return anthropic.NewClient(anthropicModel(tier))
 	case "openai":
 		return museOpenAI.NewClient(openaiModel(tier))
-	case "bedrock", "":
+	case "bedrock":
 		return bedrock.NewClient(ctx, bedrockModel(tier))
 	default:
 		return nil, fmt.Errorf("unknown MUSE_PROVIDER %q (use 'anthropic', 'openai', or 'bedrock')", provider)
 	}
+}
+
+// detectProvider returns the provider from MUSE_PROVIDER, or auto-detects
+// based on which API key is present in the environment.
+func detectProvider() string {
+	if p := os.Getenv("MUSE_PROVIDER"); p != "" {
+		return p
+	}
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return "anthropic"
+	}
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		return "openai"
+	}
+	return "bedrock"
 }
 
 func bedrockModel(tier string) string {
